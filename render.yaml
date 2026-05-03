@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: craftsman-retell-jobnimbus-bridge
+    runtime: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8787
+      - key: JOBNIMBUS_BASE_URL
+        value: https://app.jobnimbus.com/api1
+      - key: JOBNIMBUS_CONTACT_RECORD_TYPE_NAME
+        value: Customer
+      - key: JOBNIMBUS_CONTACT_STATUS_NAME
+        value: New
+      - key: JOBNIMBUS_SOURCE_NAME
+        value: Jimmy Retell
+      - key: JOBNIMBUS_CREATE_JOB
+        value: "false"
+      - key: JOBNIMBUS_TASK_RECORD_TYPE_NAME
+        value: Phone Call
+      - key: JOBNIMBUS_TASK_OWNER_IDS
+        sync: false
+      - key: JOBNIMBUS_SCHEDULE_OWNER_IDS
+        sync: false
+      - key: JOBNIMBUS_SLOT_MINUTES
+        value: 30
+      - key: JOBNIMBUS_WORKDAY_START_HOUR
+        value: 8
+      - key: JOBNIMBUS_WORKDAY_END_HOUR
+        value: 17
+      - key: JOBNIMBUS_LOOKAHEAD_DAYS
+        value: 14
+      - key: JOBNIMBUS_SCHEDULE_BUFFER_MINUTES
+        value: 30
+      - key: JOBNIMBUS_QUERY_SIZE
+        value: 250
+      - key: RETELL_API_KEY
+        sync: false
+      - key: JOBNIMBUS_API_KEY
+        sync: false

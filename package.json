@@ -1,0 +1,15 @@
+{
+  "name": "retell-jobnimbus-integration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Webhook bridge that turns Retell call analysis into JobNimbus leads and scheduled callback tasks.",
+  "scripts": {
+    "start": "node --env-file=.env src/server.mjs",
+    "dev": "node --watch --env-file=.env src/server.mjs",
+    "check": "node --check src/server.mjs"
+  },
+  "dependencies": {
+    "retell-sdk": "^4.37.0"
+  }
+}

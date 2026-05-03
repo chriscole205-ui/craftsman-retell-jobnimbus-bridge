@@ -1,0 +1,18 @@
+{
+  "call_analysis_schema": {
+    "user_reached": "Boolean. True when a real caller was reached and completed intake.",
+    "full_name": "Caller full name.",
+    "best_callback_number": "Best callback number.",
+    "property_address": "Street address for the property.",
+    "city": "Property city.",
+    "state": "Property state abbreviation.",
+    "zip": "Property ZIP code.",
+    "issue_type": "Short description of the roofing issue.",
+    "issue_started": "When the issue started.",
+    "active_leak": "Boolean. Is water actively coming in now?",
+    "storm_damage": "Boolean. Did the caller mention storm damage?",
+    "insurance_claim_opened": "Boolean. Has an insurance claim already been opened?",
+    "best_callback_time": "Caller's preferred callback window.",
+    "detailed_call_summary": "2-4 sentence summary with the problem, urgency, and requested follow-up."
+  }
+}
