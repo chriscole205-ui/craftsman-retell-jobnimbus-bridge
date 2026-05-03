@@ -10,6 +10,7 @@
     "check": "node --check src/server.mjs"
   },
   "dependencies": {
+    "luxon": "^3.7.1",
     "retell-sdk": "^4.37.0"
   }
 }

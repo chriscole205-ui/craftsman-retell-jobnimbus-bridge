@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { URL, pathToFileURL } from 'node:url';
+import { DateTime } from 'luxon';
 import Retell from 'retell-sdk';
 
 const config = {
@@ -17,6 +18,7 @@ const config = {
   taskRecordTypeName: process.env.JOBNIMBUS_TASK_RECORD_TYPE_NAME || 'Phone Call',
   taskOwnerIds: splitCsv(process.env.JOBNIMBUS_TASK_OWNER_IDS || process.env.JOBNIMBUS_TASK_OWNER_ID || ''),
   scheduleOwnerIds: splitCsv(process.env.JOBNIMBUS_SCHEDULE_OWNER_IDS || process.env.JOBNIMBUS_SCHEDULE_OWNER_ID || process.env.JOBNIMBUS_TASK_OWNER_IDS || process.env.JOBNIMBUS_TASK_OWNER_ID || ''),
+  timezone: process.env.JOBNIMBUS_TIMEZONE || 'America/Chicago',
   slotMinutes: Number(process.env.JOBNIMBUS_SLOT_MINUTES || 60),
   workdayStartHour: Number(process.env.JOBNIMBUS_WORKDAY_START_HOUR || 8),
   workdayEndHour: Number(process.env.JOBNIMBUS_WORKDAY_END_HOUR || 17),
@@ -287,25 +289,23 @@ async function createJobRecord(lead, call, contact) {
   });
 }
 
-function overlaps(slotStart, slotEnd, busyStart, busyEnd) {
-  return slotStart < busyEnd && slotEnd > busyStart;
+function overlaps(slotStartMs, slotEndMs, busyStartMs, busyEndMs) {
+  return slotStartMs < busyEndMs && slotEndMs > busyStartMs;
 }
 
-function roundUpToSlot(date, slotMinutes) {
-  const rounded = new Date(date);
-  rounded.setSeconds(0, 0);
-  const minutes = rounded.getMinutes();
-  const remainder = minutes % slotMinutes;
+function roundUpToSlot(dateTime, slotMinutes) {
+  let rounded = dateTime.set({ second: 0, millisecond: 0 });
+  const remainder = rounded.minute % slotMinutes;
   if (remainder !== 0) {
-    rounded.setMinutes(minutes + (slotMinutes - remainder));
+    rounded = rounded.plus({ minutes: slotMinutes - remainder });
   }
   return rounded;
 }
 
-async function fetchScheduledTasks(ownerId, startDate, endDate) {
+async function fetchScheduledTasks(ownerId, startDateTime, endDateTime) {
   const filter = {
     must: [
-      { range: { date_start: { gte: Math.floor(startDate.getTime() / 1000), lte: Math.floor(endDate.getTime() / 1000) } } },
+      { range: { date_start: { gte: Math.floor(startDateTime.toSeconds()), lte: Math.floor(endDateTime.toSeconds()) } } },
     ],
     must_not: [{ term: { is_completed: true } }],
   };
@@ -333,29 +333,29 @@ async function findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd) {
   const busyWindows = tasks
     .filter((task) => task?.date_start)
     .map((task) => {
-      const start = new Date(Number(task.date_start) * 1000);
+      const start = DateTime.fromSeconds(Number(task.date_start), { zone: config.timezone });
       const estimatedMinutes = Number(task.estimated_time || config.slotMinutes);
       const endSeconds = Number(task.date_end || 0);
       const end = endSeconds > Number(task.date_start)
-        ? new Date(endSeconds * 1000)
-        : new Date(start.getTime() + estimatedMinutes * 60_000);
-      return { start, end };
+        ? DateTime.fromSeconds(endSeconds, { zone: config.timezone })
+        : start.plus({ minutes: estimatedMinutes });
+      return { startMs: start.toMillis(), endMs: end.toMillis() };
     })
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => a.startMs - b.startMs);
 
   for (let dayOffset = 0; dayOffset <= config.lookaheadDays; dayOffset += 1) {
-    const baseDay = new Date(earliest);
-    baseDay.setDate(baseDay.getDate() + dayOffset);
+    const baseDay = earliest.plus({ days: dayOffset }).startOf('day');
+    const dayStart = baseDay.set({ hour: config.workdayStartHour, minute: 0, second: 0, millisecond: 0 });
+    const dayEnd = baseDay.set({ hour: config.workdayEndHour, minute: 0, second: 0, millisecond: 0 });
 
-    const dayStart = new Date(baseDay.getFullYear(), baseDay.getMonth(), baseDay.getDate(), config.workdayStartHour, 0, 0, 0);
-    const dayEnd = new Date(baseDay.getFullYear(), baseDay.getMonth(), baseDay.getDate(), config.workdayEndHour, 0, 0, 0);
-
-    let cursor = dayOffset === 0 && earliest > dayStart ? new Date(earliest) : dayStart;
+    let cursor = dayOffset === 0 && earliest > dayStart ? earliest : dayStart;
     cursor = roundUpToSlot(cursor, config.slotMinutes);
 
-    while (cursor.getTime() + config.slotMinutes * 60_000 <= dayEnd.getTime()) {
-      const slotEnd = new Date(cursor.getTime() + config.slotMinutes * 60_000);
-      const conflict = busyWindows.some((window) => overlaps(cursor, slotEnd, window.start, window.end));
+    while (cursor.plus({ minutes: config.slotMinutes }).toMillis() <= dayEnd.toMillis()) {
+      const slotEnd = cursor.plus({ minutes: config.slotMinutes });
+      const slotStartMs = cursor.toMillis();
+      const slotEndMs = slotEnd.toMillis();
+      const conflict = busyWindows.some((window) => overlaps(slotStartMs, slotEndMs, window.startMs, window.endMs));
       if (!conflict) {
         return { ownerId, start: cursor, end: slotEnd };
       }
@@ -367,9 +367,9 @@ async function findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd) {
 }
 
 async function findNextAvailableSlot() {
-  const now = new Date();
-  const earliest = roundUpToSlot(new Date(now.getTime() + config.scheduleBufferMinutes * 60_000), config.slotMinutes);
-  const horizonEnd = new Date(now.getTime() + config.lookaheadDays * 24 * 60 * 60_000);
+  const now = DateTime.now().setZone(config.timezone);
+  const earliest = roundUpToSlot(now.plus({ minutes: config.scheduleBufferMinutes }), config.slotMinutes);
+  const horizonEnd = now.plus({ days: config.lookaheadDays });
   const candidateOwners = unique(config.scheduleOwnerIds.length ? config.scheduleOwnerIds : config.taskOwnerIds);
   const ownersToCheck = candidateOwners.length ? candidateOwners : [null];
 
@@ -381,7 +381,7 @@ async function findNextAvailableSlot() {
     }
   }
 
-  slots.sort((a, b) => a.start - b.start);
+  slots.sort((a, b) => a.start.toMillis() - b.start.toMillis());
   if (slots[0]) {
     return slots[0];
   }
@@ -409,8 +409,8 @@ async function createCallbackTask(lead, call, relatedRecord) {
     description: buildDescription(lead, call),
     record_type_name: config.taskRecordTypeName,
     related: [{ id: relatedRecord.jnid }],
-    date_start: Math.floor(slot.start.getTime() / 1000),
-    date_end: Math.floor(slot.end.getTime() / 1000),
+    date_start: Math.floor(slot.start.toSeconds()),
+    date_end: Math.floor(slot.end.toSeconds()),
     estimated_time: config.slotMinutes,
     external_id: externalId,
   };

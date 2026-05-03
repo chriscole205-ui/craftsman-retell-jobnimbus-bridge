@@ -24,6 +24,8 @@ services:
         sync: false
       - key: JOBNIMBUS_SCHEDULE_OWNER_IDS
         sync: false
+      - key: JOBNIMBUS_TIMEZONE
+        value: America/Chicago
       - key: JOBNIMBUS_SLOT_MINUTES
         value: 30
       - key: JOBNIMBUS_WORKDAY_START_HOUR
