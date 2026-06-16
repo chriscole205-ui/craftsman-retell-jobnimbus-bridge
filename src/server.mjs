@@ -345,6 +345,8 @@ async function findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd) {
 
   for (let dayOffset = 0; dayOffset <= config.lookaheadDays; dayOffset += 1) {
     const baseDay = earliest.plus({ days: dayOffset }).startOf('day');
+    // Skip weekends — luxon weekday: 1=Mon ... 6=Sat, 7=Sun
+    if (baseDay.weekday === 6 || baseDay.weekday === 7) continue;
     const dayStart = baseDay.set({ hour: config.workdayStartHour, minute: 0, second: 0, millisecond: 0 });
     const dayEnd = baseDay.set({ hour: config.workdayEndHour, minute: 0, second: 0, millisecond: 0 });
 
