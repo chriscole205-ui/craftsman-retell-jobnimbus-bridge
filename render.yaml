@@ -19,7 +19,7 @@ services:
       - key: JOBNIMBUS_CREATE_JOB
         value: "false"
       - key: JOBNIMBUS_TASK_RECORD_TYPE_NAME
-        value: Phone Call
+        value: Initial Appointment
       - key: JOBNIMBUS_TASK_OWNER_IDS
         sync: false
       - key: JOBNIMBUS_SCHEDULE_OWNER_IDS
@@ -27,7 +27,7 @@ services:
       - key: JOBNIMBUS_TIMEZONE
         value: America/Chicago
       - key: JOBNIMBUS_SLOT_MINUTES
-        value: 30
+        value: 60
       - key: JOBNIMBUS_WORKDAY_START_HOUR
         value: 8
       - key: JOBNIMBUS_WORKDAY_END_HOUR

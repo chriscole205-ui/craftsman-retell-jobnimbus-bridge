@@ -134,9 +134,44 @@ function extractLead(call) {
     stormDamage: toBoolean(firstDefined(analysis, ['storm_damage'])),
     insuranceClaimOpened: toBoolean(firstDefined(analysis, ['insurance_claim_opened', 'insurance_claim', 'Insurnace Claim'])),
     bestCallbackTime: firstDefined(analysis, ['best_callback_time', 'callback_window', 'Best Call Back Time & Availability']),
+    preferredVisitDay: firstDefined(analysis, ['preferred_visit_day', 'preferred_day', 'visit_day']),
+    preferredVisitWindow: firstDefined(analysis, ['preferred_visit_window', 'preferred_time_window', 'visit_window', 'time_of_day']),
     detailedCallSummary: firstDefined(analysis, ['detailed_call_summary', 'summary', 'call_summary', 'Summarize Callers Issue']),
     userReached: toBoolean(firstDefined(analysis, ['user_reached', 'answered_call', 'call_successful'])),
   };
+}
+
+function parsePreferredWindow(text) {
+  if (!text) return null;
+  const t = String(text).toLowerCase();
+  if (/morning|before noon|\bam\b|early/.test(t)) return 'morning';
+  if (/afternoon|after noon|after lunch|\bpm\b|evening|late/.test(t)) return 'afternoon';
+  return null;
+}
+
+function parsePreferredDay(text, now) {
+  if (!text) return null;
+  const t = String(text).toLowerCase();
+  if (/asap|any|whenever|first available|earliest|soon as possible/.test(t)) return null;
+  if (/tomorrow/.test(t)) return now.plus({ days: 1 }).startOf('day');
+  if (/today/.test(t)) return now.startOf('day');
+  const weekdays = { monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 7 };
+  for (const [name, dow] of Object.entries(weekdays)) {
+    if (t.includes(name)) {
+      let candidate = now.startOf('day');
+      for (let i = 0; i < 14; i += 1) {
+        if (candidate.weekday === dow && candidate >= now.startOf('day')) {
+          // If "next <weekday>" and today is that weekday, push to next week
+          if (/next/.test(t) && candidate.toISODate() === now.toISODate()) {
+            candidate = candidate.plus({ days: 7 });
+          }
+          return candidate;
+        }
+        candidate = candidate.plus({ days: 1 });
+      }
+    }
+  }
+  return null;
 }
 
 function requireValue(name, value) {
@@ -155,6 +190,8 @@ function buildDescription(lead, call) {
     lead.stormDamage !== undefined ? `Storm damage: ${lead.stormDamage ? 'Yes' : 'No'}` : null,
     lead.insuranceClaimOpened !== undefined ? `Insurance claim opened: ${lead.insuranceClaimOpened ? 'Yes' : 'No'}` : null,
     lead.bestCallbackTime ? `Preferred callback time: ${lead.bestCallbackTime}` : null,
+    lead.preferredVisitDay ? `Preferred visit day: ${lead.preferredVisitDay}` : null,
+    lead.preferredVisitWindow ? `Preferred visit window: ${lead.preferredVisitWindow}` : null,
     call?.call_id ? `Retell call ID: ${call.call_id}` : null,
   ].filter(Boolean);
 
@@ -327,7 +364,7 @@ async function fetchScheduledTasks(ownerId, startDateTime, endDateTime) {
   return asArray(result);
 }
 
-async function findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd) {
+async function findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd, prefs = {}) {
   const tasks = await fetchScheduledTasks(ownerId, earliest, horizonEnd);
 
   const busyWindows = tasks
@@ -343,12 +380,24 @@ async function findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd) {
     })
     .sort((a, b) => a.startMs - b.startMs);
 
+  // Determine the window of business hours to consider for this search.
+  // morning = 8:00-12:00, afternoon = 12:00-17:00, otherwise full workday.
+  let windowStartHour = config.workdayStartHour;
+  let windowEndHour = config.workdayEndHour;
+  if (prefs.window === 'morning') {
+    windowEndHour = Math.min(12, config.workdayEndHour);
+  } else if (prefs.window === 'afternoon') {
+    windowStartHour = Math.max(12, config.workdayStartHour);
+  }
+
   for (let dayOffset = 0; dayOffset <= config.lookaheadDays; dayOffset += 1) {
     const baseDay = earliest.plus({ days: dayOffset }).startOf('day');
     // Skip weekends — luxon weekday: 1=Mon ... 6=Sat, 7=Sun
     if (baseDay.weekday === 6 || baseDay.weekday === 7) continue;
-    const dayStart = baseDay.set({ hour: config.workdayStartHour, minute: 0, second: 0, millisecond: 0 });
-    const dayEnd = baseDay.set({ hour: config.workdayEndHour, minute: 0, second: 0, millisecond: 0 });
+    // If a preferred day was set, only consider that exact day.
+    if (prefs.day && baseDay.toISODate() !== prefs.day.toISODate()) continue;
+    const dayStart = baseDay.set({ hour: windowStartHour, minute: 0, second: 0, millisecond: 0 });
+    const dayEnd = baseDay.set({ hour: windowEndHour, minute: 0, second: 0, millisecond: 0 });
 
     let cursor = dayOffset === 0 && earliest > dayStart ? earliest : dayStart;
     cursor = roundUpToSlot(cursor, config.slotMinutes);
@@ -368,24 +417,30 @@ async function findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd) {
   return null;
 }
 
-async function findNextAvailableSlot() {
+async function findNextAvailableSlot(prefs = {}) {
   const now = DateTime.now().setZone(config.timezone);
   const earliest = roundUpToSlot(now.plus({ minutes: config.scheduleBufferMinutes }), config.slotMinutes);
   const horizonEnd = now.plus({ days: config.lookaheadDays });
   const candidateOwners = unique(config.scheduleOwnerIds.length ? config.scheduleOwnerIds : config.taskOwnerIds);
   const ownersToCheck = candidateOwners.length ? candidateOwners : [null];
 
-  const slots = [];
-  for (const ownerId of ownersToCheck) {
-    const slot = await findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd);
-    if (slot) {
-      slots.push(slot);
-    }
+  // Strategies: 1) try with caller's preferences, 2) fall back to any available slot.
+  const strategies = [];
+  if (prefs.window || prefs.day) {
+    strategies.push({ ...prefs, fallback: false });
   }
+  strategies.push({ window: null, day: null, fallback: prefs.window || prefs.day ? true : false });
 
-  slots.sort((a, b) => a.start.toMillis() - b.start.toMillis());
-  if (slots[0]) {
-    return slots[0];
+  for (const strategy of strategies) {
+    const slots = [];
+    for (const ownerId of ownersToCheck) {
+      const slot = await findNextAvailableSlotForOwner(ownerId, earliest, horizonEnd, strategy);
+      if (slot) slots.push(slot);
+    }
+    slots.sort((a, b) => a.start.toMillis() - b.start.toMillis());
+    if (slots[0]) {
+      return { ...slots[0], fallbackUsed: strategy.fallback };
+    }
   }
 
   throw new Error(`No open scheduling slot found within ${config.lookaheadDays} days.`);
@@ -393,8 +448,9 @@ async function findNextAvailableSlot() {
 
 function buildTaskTitle(lead) {
   const name = lead.fullName || 'New lead';
-  const reason = lead.issueType || 'Roof callback';
-  return `Call ${name} - ${reason}`;
+  const reason = lead.issueType || 'Roof inspection';
+  const city = lead.city ? ` (${lead.city})` : '';
+  return `Site Visit: ${name}${city} - ${reason}`;
 }
 
 async function createCallbackTask(lead, call, relatedRecord) {
@@ -405,10 +461,22 @@ async function createCallbackTask(lead, call, relatedRecord) {
   const existing = await findExisting('/tasks', externalId);
   if (existing) return existing;
 
-  const slot = await findNextAvailableSlot();
+  const now = DateTime.now().setZone(config.timezone);
+  const prefs = {
+    window: parsePreferredWindow(lead.preferredVisitWindow),
+    day: parsePreferredDay(lead.preferredVisitDay, now),
+  };
+
+  const slot = await findNextAvailableSlot(prefs);
+
+  let description = buildDescription(lead, call);
+  if (slot.fallbackUsed) {
+    description += '\nNote: caller-requested day/window had no open slot. Booked next available — call to confirm.';
+  }
+
   const payload = {
     title: buildTaskTitle(lead),
-    description: buildDescription(lead, call),
+    description,
     record_type_name: config.taskRecordTypeName,
     related: [{ id: relatedRecord.jnid }],
     date_start: Math.floor(slot.start.toSeconds()),

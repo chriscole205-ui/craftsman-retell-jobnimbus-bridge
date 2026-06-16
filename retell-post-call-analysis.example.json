@@ -12,7 +12,9 @@
     "active_leak": "Boolean. Is water actively coming in now?",
     "storm_damage": "Boolean. Did the caller mention storm damage?",
     "insurance_claim_opened": "Boolean. Has an insurance claim already been opened?",
-    "best_callback_time": "Caller's preferred callback window.",
+    "best_callback_time": "Caller's preferred callback window if they want a phone call back.",
+    "preferred_visit_day": "Caller's preferred day for the on-site inspection (e.g., 'tomorrow', 'Wednesday', 'next Monday', 'ASAP').",
+    "preferred_visit_window": "Caller's preferred time of day for the on-site visit ('morning', 'afternoon', or 'any').",
     "detailed_call_summary": "2-4 sentence summary with the problem, urgency, and requested follow-up."
   }
 }
