@@ -117,7 +117,11 @@ function parseCityZip(value) {
 }
 
 function extractLead(call) {
-  const analysis = call?.call_analysis || {};
+  const rawAnalysis = call?.call_analysis || {};
+  // Retell nests configured post-call analysis fields inside `custom_analysis_data`.
+  // Merge that onto the analysis root so custom fields (full_name, property_address,
+  // etc.) are readable alongside built-in fields (call_summary, call_successful).
+  const analysis = { ...rawAnalysis, ...(rawAnalysis.custom_analysis_data || {}) };
   const cityZip = parseCityZip(firstDefined(analysis, ['city', 'City and Zip', 'city_and_zip']));
   const emergency = toBoolean(firstDefined(analysis, ['active_leak', 'water_coming_in_now', 'Emergency', 'emergency']));
 
