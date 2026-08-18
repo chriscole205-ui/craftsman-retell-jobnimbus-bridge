@@ -269,8 +269,15 @@ async function createContactLead(lead, call) {
   if (existing) return existing;
 
   const { firstName, lastName } = splitName(lead.fullName);
+  // JobNimbus requires a display_name; if the caller gave no name, fall back to the
+  // callback number (or the call id) so the lead is never dropped for a missing name.
+  const fallbackName = lead.callbackNumber
+    ? `Retell caller ${lead.callbackNumber}`
+    : `Retell caller ${call.call_id}`;
+  const displayName = [firstName, lastName].filter(Boolean).join(' ').trim() || fallbackName;
   const payload = {
-    first_name: firstName,
+    display_name: displayName,
+    first_name: firstName || displayName,
     last_name: lastName,
     mobile_phone: lead.callbackNumber,
     address_line1: lead.propertyAddress,
