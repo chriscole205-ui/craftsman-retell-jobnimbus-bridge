@@ -544,6 +544,8 @@ async function requestHandler(req, res) {
       ok: missingStartupConfig.length === 0,
       missingStartupConfig,
       uptimeSeconds: Math.round(process.uptime()),
+      build: 'display_name-fix-2026-08-18',
+      sendsDisplayName: true,
     });
   }
 
